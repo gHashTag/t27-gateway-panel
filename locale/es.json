@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Panel de auditoría del gateway",
+    "description": "Solo lectura: cola del registro de auditoría del gateway t27 bajo el redactor."
+  }
+}

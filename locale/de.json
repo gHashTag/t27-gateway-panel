@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Gateway-Audit-Panel",
+    "description": "Nur lesend: Tail des t27-Gateway-Auditprotokolls unter dem Eingabefeld."
+  }
+}

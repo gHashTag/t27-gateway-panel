@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Panneau d'audit du gateway",
+    "description": "Lecture seule : queue du journal d'audit du gateway t27 sous le composeur."
+  }
+}

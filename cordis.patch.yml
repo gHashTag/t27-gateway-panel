@@ -1,0 +1,3 @@
+- insert:
+    - id: t27-gateway-ui
+      name: '@local/t27-gateway'

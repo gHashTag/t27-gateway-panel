@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Gateway audit panel",
+    "description": "Read-only tail of the t27 gateway audit log below the message composer."
+  }
+}

@@ -1,0 +1,4 @@
+1762798000	queen	cdp.observe	9222	0	0	2854501129
+not-a-number	extra	gateway.status	3081	0	0	1
+1762798005	bee-7	gateway.metrics	3081	0	0	12345
+1762798006	queen	gateway.metrics	3081	0	0

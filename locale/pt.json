@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Painel de auditoria do gateway",
+    "description": "Somente leitura: cauda do log de auditoria do gateway t27 abaixo do compositor."
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "name": "@local/t27-gateway",
+  "version": "0.4.0",
+  "private": true,
+  "type": "module",
+  "description": "Observation-only panel over the t27 gateway audit log; all decisions live in .t27 specs, JS is thin plumbing over generated artifacts.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "generated/gateway_logic.mjs",
+    "generated/gateway_ui.mjs",
+    "spec/gateway_logic.t27",
+    "spec/gateway_ui.t27",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "sh scripts/build.sh",
+    "test": "node --test test/"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": ["@deepseek-ai/dsh-client-ui-conversation"]
+    }
+  }
+}
