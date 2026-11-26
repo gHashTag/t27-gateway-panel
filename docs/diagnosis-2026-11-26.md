@@ -1,12 +1,9 @@
 # Gateway audit panel: broken layout + empty audit counters - diagnosis
 
 Date: 2026-11-26
-Machine: macOS, DSH web live on 127.0.0.1:3081 (pid 88005 at measurement time,
-cwd `~/deepseek-harness`)
-Panel package: `<repo>` (this repository). At measurement time it was a
-local-only checkout with no remote; it was published to GitHub after the fix.
-Live install: `~/.dsh/profiles/web/node_modules/@local/t27-gateway` -> symlink
-to `<repo>`
+Machine: ~ (macOS), DSH web live on 127.0.0.1:3081 (pid 88005, cwd ~/deepseek-harness)
+Panel package: <repo> (git, local-only, no remote; HEAD f1de7fb "spec-first migration")
+Live install: ~/.dsh/profiles/web/node_modules/@local/t27-gateway -> symlink to <repo>
 Browser evidence: BrowserOS neo, page 52, http://127.0.0.1:3081, viewport 450x799
 
 ## PART 1 - the broken layout (measured, not inferred)
@@ -309,3 +306,63 @@ resolves from the package directory. The only bridge today is the
 
 So the panel is truthful: "Audit source not present -- <path>" with zero
 counters is the fail-closed state, not a counting bug.
+
+## PART 5 - published to GitHub for installation on another machine
+
+Repository: **https://github.com/gHashTag/t27-gateway-panel** (PUBLIC, default
+branch `master`). Created 2026-11-26 on the owner's order ("save everything to
+GitHub so it can be installed on another machine").
+
+Commits on `master`:
+
+| SHA | what it carries |
+|---|---|
+| 08ef0b0 | merge of the narrow-layout lane into master |
+| a0066f1 | publish: build products committed, README install procedure, docs/diagnosis-2026-11-26.md |
+| 88370e8 | docs: the install command needs its required `--profile` flag |
+
+Secret scan before publishing: `gitleaks detect` over the whole history
+(9 commits at the time, no leaks) plus a targeted pattern scan for API keys,
+GitHub tokens, AWS keys, Slack tokens and JWTs over every tracked file - no
+match. The repository carries no credential.
+
+What made the git install possible: `generated/gateway_logic.mjs`,
+`generated/gateway_ui.mjs` and `client.gateway_ui.js` are BUILD PRODUCTS
+(written only by `scripts/build.sh`), and they are now committed, because a
+git dependency has to work on a machine that has no `t27c` toolchain. They
+are still never hand-written, and the contract tests read the generated
+modules, so a stale artifact fails the suite.
+
+Verification of the published state (fresh clone, no build step, no t27c):
+
+    $ git clone https://github.com/gHashTag/t27-gateway-panel.git clone-check
+    $ cd clone-check && node --test test/*.test.mjs
+    # tests 39
+    # pass 39
+    # fail 0
+
+    $ npm pack --dry-run
+    21 files, 29.3 kB tarball, including bridge/, generated/, scripts/, spec/
+    and client.gateway_ui.js
+
+Install procedure (documented in the repository README):
+
+    git clone https://github.com/gHashTag/t27-gateway-panel.git
+    cd t27-gateway-panel && node --test test/*.test.mjs    # optional self-check
+    dsh plugin --profile <profile> add link:/absolute/path/to/t27-gateway-panel
+    # or straight from GitHub:
+    dsh plugin --profile <profile> add github:gHashTag/t27-gateway-panel
+
+plus the three profile rows the plugin needs: the dependency in
+`<profile>/package.json` (written by the plugin manager), `"@local/t27-gateway"`
+in `dsh.profile.bundles`, and `- id: t27-gateway` in
+`<profile>/cordis.patch.yml`; and a restart of the DSH web process, because
+the server memoises a plugin bundle on its first request.
+
+Not published: a concurrent session was editing `spec/gateway_ui.t27` in the
+same working tree at publication time (a "compact dock law" declaring
+`DEFAULT_EXPANDED`, `LABEL_EXPAND`, `LABEL_COLLAPSE`, written at 20:39 while
+the session was publishing). That edit is INCOMPLETE - no client code and no
+generated artifact consumes it - so it was left uncommitted and untouched in
+the working tree, and it is NOT in the published repository. The lane that owns
+it commits and pushes it when it is finished.
