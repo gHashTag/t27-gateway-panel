@@ -143,7 +143,8 @@ window.__ModuleLoader__.load({
         .replace('{denyRate}', String(counters.denyRate))
         .replace('{total}', String(counters.total));
       const footerText = ui.LABEL_DROPPED_TEMPLATE.replace('{dropped}', String(dropped));
-      const narrow = ui.is_narrow(widthPx);
+      const contentWidth = ui.derive_content_width(widthPx);
+      const toolbarWraps = ui.toolbar_wraps(contentWidth);
       const stateText =
         kind === 1 ? ui.LABEL_ERROR : kind === 2 ? ui.LABEL_SOURCE_ABSENT : kind === 3 ? ui.LABEL_EMPTY : null;
 
@@ -183,7 +184,7 @@ window.__ModuleLoader__.load({
         color: 'inherit',
       };
       const secondaryStyle = { color: 'var(' + ui.STYLE_TOKEN_TEXT_SECONDARY + ', inherit)' };
-      const selectStyle = { ...ellipsisStyle, maxWidth: ui.TOOLBAR_CONTROL_MAX_PX };
+      const selectStyle = { ...ellipsisStyle, maxWidth: ui.TOOLBAR_CONTROL_MAX_PX, minWidth: ui.TOOLBAR_CONTROL_MIN_PX };
       const inputStyle = { flex: '1 1 120px', minWidth: ui.INPUT_MIN_WIDTH_PX };
 
       const rowNodes = rows.map((row) =>
@@ -191,7 +192,7 @@ window.__ModuleLoader__.load({
           'div',
           { key: row.key, style: { display: 'flex', gap: 8, alignItems: 'baseline', padding: '4px 0' } },
           row.cells
-            .filter((cell) => !(narrow === true && cell.hideWhenNarrow === true))
+            .filter((cell) => !(ui.is_narrow(widthPx) === true && cell.hideWhenNarrow === true))
             .map((cell, index) =>
               h(
                 'span',
@@ -224,11 +225,11 @@ window.__ModuleLoader__.load({
         'div',
         { ref: rootRef, style: panelStyle },
         h('div', null, title),
-        detail !== '' ? h('div', { style: secondaryStyle }, detail) : null,
+        detail !== '' ? h('div', { style: { ...secondaryStyle, overflowWrap: ui.LONG_TEXT_WRAP_MODE } }, detail) : null,
         h('div', { style: secondaryStyle }, countersLine),
         h(
           'div',
-          { style: { display: 'flex', gap: ui.TOOLBAR_GAP_PX, alignItems: 'center', margin: '8px 0', flexWrap: narrow ? 'wrap' : 'nowrap' } },
+          { style: { display: 'flex', gap: ui.TOOLBAR_GAP_PX, alignItems: 'center', margin: '8px 0', flexWrap: toolbarWraps ? 'wrap' : 'nowrap' } },
           h(
             'select',
             { style: selectStyle, value: filter.tool !== null ? filter.tool : ui.LABEL_TOOL_ALL, onChange: onToolChange },
@@ -254,7 +255,7 @@ window.__ModuleLoader__.load({
         stateText !== null
           ? h(
               'div',
-              { style: { ...secondaryStyle, whiteSpace: narrow ? 'normal' : 'nowrap' } },
+              { style: { ...secondaryStyle, overflowWrap: ui.LONG_TEXT_WRAP_MODE, whiteSpace: narrow ? 'normal' : 'nowrap' } },
               stateText + (detail !== '' ? ' -- ' + detail : ''),
             )
           : rowNodes,

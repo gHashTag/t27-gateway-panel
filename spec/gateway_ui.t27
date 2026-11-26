@@ -80,6 +80,13 @@ pub fn is_narrow(width_px: i32) bool {
     return width_px < NARROW_MAX_WIDTH_PX;
 }
 
+; ---- long-text wrap mode --------------------------------------------------------
+
+; CSS overflow-wrap value for breaking long unbreakable tokens (e.g. source paths).
+; `anywhere` lowers the min-content width of the text, letting the flex row
+; shrink instead of pushing the panel wider.
+pub const LONG_TEXT_WRAP_MODE : string = "anywhere";
+
 ; ---- narrow layout law --------------------------------------------------------
 
 ; Panel padding used to derive content width from root width.
@@ -87,6 +94,12 @@ pub const PANEL_PADDING_PX : i32 = 12;
 
 ; Input minimum width.
 pub const INPUT_MIN_WIDTH_PX : i32 = 80;
+
+; Minimum width for toolbar controls, allowing them to shrink below min-content.
+; The select style already carries overflow:hidden + text-overflow:ellipsis +
+; white-space:nowrap, so a shrunk select truncates with an ellipsis instead of
+; overflowing.
+pub const TOOLBAR_CONTROL_MIN_PX : i32 = 60;
 
 ; Toolbar control maximum width (applies to select and input elements).
 pub const TOOLBAR_CONTROL_MAX_PX : i32 = 160;
@@ -100,8 +113,12 @@ pub fn derive_content_width(root_width_px: i32) i32 {
 }
 
 ; Decides whether the toolbar row should wrap underneath controls.
+; The toolbar needs the sum of its four controls plus the gaps to stay on one line.
+; The threshold is owned by the spec; the client never invents it.
+pub const TOOLBAR_WRAP_THRESHOLD_PX : i32 = 480;
+
 pub fn toolbar_wraps(width_px: i32) bool {
-    return is_narrow(width_px);
+    return width_px < TOOLBAR_WRAP_THRESHOLD_PX;
 }
 
 ; ---- row cap law ----------------------------------------------------------
@@ -209,6 +226,21 @@ test "narrow boundary is strict at the threshold" {
     try std.testing.expect(!is_narrow(480));
     try std.testing.expect(is_narrow(390));
     try std.testing.expect(!is_narrow(800));
+}
+
+test "long-text wrap mode is anywhere" {
+    try std.testing.expectEqualStrings("anywhere", LONG_TEXT_WRAP_MODE);
+}
+
+test "toolbar wraps when below threshold" {
+    try std.testing.expect(toolbar_wraps(479));
+    try std.testing.expect(!toolbar_wraps(480));
+    try std.testing.expect(toolbar_wraps(390));
+    try std.testing.expect(!toolbar_wraps(800));
+}
+
+test "toolbar control minimum width is 60" {
+    try std.testing.expectEqual(@as(i32, 60), TOOLBAR_CONTROL_MIN_PX);
 }
 
 test "content width derives from root minus padding" {
