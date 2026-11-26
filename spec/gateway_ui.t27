@@ -80,6 +80,38 @@ pub fn is_narrow(width_px: i32) bool {
     return width_px < NARROW_MAX_WIDTH_PX;
 }
 
+; ---- narrow layout law --------------------------------------------------------
+; The panel lives in a host slot whose width is NOT the panel's: the host
+; docks it in a nowrap flex row next to its own chips, so the panel gets
+; what is left. Everything the panel needs to survive that is law here.
+
+; Horizontal padding the panel draws around its content.
+pub const PANEL_PADDING_PX : i32 = 12;
+
+; Toolbar geometry: two selects, one text input and one button share the
+; toolbar row. They shrink towards their minimum widths first; the row
+; breaks onto the next line only when they no longer fit.
+pub const TOOLBAR_GAP_PX : i32 = 8;
+pub const TOOLBAR_CONTROL_MAX_PX : i32 = 160;
+pub const TOOLBAR_CONTROL_MIN_PX : i32 = 60;
+pub const TOOLBAR_INPUT_BASIS_PX : i32 = 120;
+pub const INPUT_MIN_WIDTH_PX : i32 = 80;
+
+; The toolbar row may wrap at every width: the controls shrink towards their
+; minimum widths, and only a row whose controls still do not fit breaks onto
+; the next line. CSS owns where the break happens; the law owns that
+; wrapping is allowed, so no width can make the row paint outside the panel.
+; A threshold in pixels was rejected on purpose: the width at which the four
+; controls fit depends on the HOST's font metrics (the button's text width),
+; which no spec can measure, so a wrong threshold either overflows the panel
+; or wraps a row that would have fitted.
+pub const TOOLBAR_FLEX_WRAP_MODE : string = "wrap";
+
+; Break mode for a long unbreakable token (the audit source path). The
+; `anywhere` mode also lowers the min-content width of the text, so the path
+; cannot push the panel wider than its own box.
+pub const LONG_TEXT_WRAP_MODE : string = "anywhere";
+
 ; ---- row cap law ----------------------------------------------------------
 
 ; Newest-first tail: never negative, never above VIEW_MAX_ROWS.
@@ -185,6 +217,23 @@ test "narrow boundary is strict at the threshold" {
     try std.testing.expect(!is_narrow(480));
     try std.testing.expect(is_narrow(390));
     try std.testing.expect(!is_narrow(800));
+}
+
+test "long-text wrap mode is anywhere" {
+    try std.testing.expectEqualStrings("anywhere", LONG_TEXT_WRAP_MODE);
+}
+
+test "toolbar row is allowed to wrap at every width" {
+    try std.testing.expectEqualStrings("wrap", TOOLBAR_FLEX_WRAP_MODE);
+}
+
+test "toolbar geometry is ordered and positive" {
+    try std.testing.expect(TOOLBAR_CONTROL_MIN_PX > 0);
+    try std.testing.expect(TOOLBAR_CONTROL_MAX_PX > TOOLBAR_CONTROL_MIN_PX);
+    try std.testing.expect(TOOLBAR_INPUT_BASIS_PX >= INPUT_MIN_WIDTH_PX);
+    try std.testing.expect(INPUT_MIN_WIDTH_PX > 0);
+    try std.testing.expect(TOOLBAR_GAP_PX > 0);
+    try std.testing.expect(PANEL_PADDING_PX > 0);
 }
 
 test "badge labels cover every decision and fail closed" {
