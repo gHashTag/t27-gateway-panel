@@ -1,3 +1,4 @@
 legacy/
 generated/
 node_modules/
+client.gateway_ui.js

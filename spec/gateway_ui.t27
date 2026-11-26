@@ -1,0 +1,215 @@
+; Gateway audit panel - UI law.
+; -------------------------------------------; Single source of truth for the client panel presentation decisions:
+; row cap, narrow threshold, state mapping, badge labels and badge theme
+; tokens. Everything here is law; generated/gateway_ui.mjs is disposable.
+; -------------------------------------------; Capability note (measured against the local t27c binary, 2026-11-25):
+; gen-js refused `string`-spelled fn parameters and returns until the
+; compiler accepted the `string` alias beside `str` (bootstrap/src/
+; codegen_js.rs is_primitive_type, fixed and unit-tested 2026-11-25; the
+; parity failure it surfaced in codegen_python was proven pre-existing by
+; stash/rerun/pop). With that fix every fn of this spec lowers and the
+; artifact's __NOT_EMITTED__ list is EMPTY. What still does not lower on
+; any backend used here: composing those scalars into one rendered view
+; model (object assembly) - that composition is the documented
+; platform-bridge exception living in the client, fed by the constants
+; below; nothing in the client may decide a threshold, a label or a token.
+
+module gateway-ui;
+
+; ---- limits ------------------------------------------------------------
+
+; At most this many rows are rendered, newest first.
+pub const VIEW_MAX_ROWS : i32 = 12;
+
+; Container width below which the panel switches to the narrow layout.
+pub const NARROW_MAX_WIDTH_PX : i32 = 480;
+
+; ---- English label defaults (labels dictionary may override) -----------
+
+pub const LABEL_TITLE : string = "Gateway audit";
+pub const LABEL_RETRY : string = "Retry";
+pub const LABEL_EMPTY : string = "No audit events yet.";
+pub const LABEL_ERROR : string = "Audit log unavailable.";
+pub const LABEL_SOURCE_ABSENT : string = "Audit source not present";
+pub const LABEL_COUNTERS_TEMPLATE : string = "allow {allow} - deny {deny} - deny rate {denyRate} - total {total}";
+pub const LABEL_DROPPED_TEMPLATE : string = "{dropped} malformed lines dropped";
+pub const LABEL_TOOL_ALL : string = "All";
+pub const LABEL_DECISION_ALL : string = "All";
+
+; ---- toolbar option lists ----------------------------------------------
+
+; "All" plus the four audit-producer tools of the audit law. Only these
+; four ever write a row (gateway_logic.t27 AUDIT_TOOLS / policy.t27), so
+; the other six tools of the TOOLS table are NOT offered: a filter that
+; can never match is a lie on the toolbar.
+pub const TOOL_OPTIONS : [string; 5] = [
+    "All",
+    "cdp.observe",
+    "dsh.status",
+    "gateway.status",
+    "gateway.policy.audit",
+];
+
+; "All" plus the three decision outcomes of the audit law.
+pub const DECISION_OPTIONS : [string; 4] = [
+    "All",
+    "ALLOW",
+    "DENY",
+    "DENY RATE",
+];
+
+; ---- theme tokens ---------------------------------------------------------
+; -------------------------------------------; Design-system tokens only: the view model never carries hex or rgb.
+; Names verified against the live host theme registry source at
+; deepseek-harness packages/client/ui-theme/src/client/index.ts lines
+; 154-167 - the same dictionary the Theme.listTokens inspect provider
+; serves via theme.exportInspectTokens() (line 237). The names once used
+; by legacy/client.js (--dsw-alias-color-status-danger and friends) do
+; not exist in that registry and are withdrawn.
+
+pub const BADGE_TOKEN_ALLOW : string = "--dsw-alias-state-success-primary";
+pub const BADGE_TOKEN_DENY : string = "--dsw-alias-state-error-primary";
+pub const STYLE_TOKEN_TEXT_SECONDARY : string = "--dsw-alias-label-secondary";
+pub const STYLE_TOKEN_BORDER : string = "--dsw-alias-border-l1";
+pub const STYLE_TOKEN_BG : string = "--dsw-alias-bg-layer-1";
+
+; ---- narrow law ---------------------------------------------------------
+
+; The panel is narrow when its container is strictly below the threshold.
+pub fn is_narrow(width_px: i32) bool {
+    return width_px < NARROW_MAX_WIDTH_PX;
+}
+
+; ---- row cap law ----------------------------------------------------------
+
+; Newest-first tail: never negative, never above VIEW_MAX_ROWS.
+pub fn visible_row_count(total_events: i32) i32 {
+    if (total_events < 0) return 0;
+    if (total_events > VIEW_MAX_ROWS) return VIEW_MAX_ROWS;
+    return total_events;
+}
+
+; ---- state mapping law ----------------------------------------------------
+
+; Resolved panel state kinds: 0 ready, 1 error, 2 source-absent, 3 empty.
+pub fn resolve_state_kind(ok: bool, source_present: bool, event_count: i32) i32 {
+    if (!ok) return 1;
+    if (!source_present) return 2;
+    if (event_count == 0) return 3;
+    return 0;
+}
+
+; Detail text for a resolved state.
+; kind 2 passes the source path through unchanged (the consumer checks the
+; path is included); kind 1 answers from the status class; kind 0 and 3
+; need no detail. String interpolation does not exist in the language, so
+; the status number cannot be embedded - that gap is reported, not hidden.
+pub fn state_detail(kind: i32, status: i32, source_path: string) string {
+    if (kind == 2) return source_path;
+    if (kind == 1) {
+        if (status >= 400) return "HTTP error";
+        return "gateway error";
+    }
+    return "";
+}
+
+; ---- badge law ------------------------------------------------------------
+
+; decision 0 allow, 1 deny, 2 deny rate; anything else fails closed.
+pub fn badge_label(decision: i32) string {
+    if (decision == 0) return "ALLOW";
+    if (decision == 1) return "DENY";
+    if (decision == 2) return "DENY RATE";
+    return "UNKNOWN";
+}
+
+pub fn badge_color_token(decision: i32) string {
+    if (decision == 0) return BADGE_TOKEN_ALLOW;
+    return BADGE_TOKEN_DENY;
+}
+
+; ---- tests ------------------------------------------------------------------
+
+test "state kind maps failure to error before anything else" {
+    const kind = resolve_state_kind(false, true, 5);
+    try std.testing.expectEqual(@as(i32, 1), kind);
+}
+
+test "state kind maps absent source before the empty check" {
+    const kind = resolve_state_kind(true, false, 0);
+    try std.testing.expectEqual(@as(i32, 2), kind);
+}
+
+test "state kind maps zero events to empty" {
+    const kind = resolve_state_kind(true, true, 0);
+    try std.testing.expectEqual(@as(i32, 3), kind);
+}
+
+test "state kind maps healthy non-empty payload to ready" {
+    const kind = resolve_state_kind(true, true, 2);
+    try std.testing.expectEqual(@as(i32, 0), kind);
+}
+
+test "state detail carries the source path for an absent source" {
+    const detail = state_detail(2, 200, "/home/user/.t27/audit.log");
+    try std.testing.expect(detail.len > 0);
+}
+
+test "state detail distinguishes HTTP class failures" {
+    const http = state_detail(1, 404, "");
+    const other = state_detail(1, 0, "");
+    try std.testing.expect(http.len > 0);
+    try std.testing.expect(other.len > 0);
+}
+
+test "state detail is empty for ready and empty states" {
+    try std.testing.expectEqual(@as(usize, 0), state_detail(0, 200, "").len);
+    try std.testing.expectEqual(@as(usize, 0), state_detail(3, 200, "").len);
+}
+
+test "row count is capped at VIEW_MAX_ROWS" {
+    try std.testing.expectEqual(@as(i32, VIEW_MAX_ROWS), visible_row_count(40));
+}
+
+test "row count passes small tails through unchanged" {
+    try std.testing.expectEqual(@as(i32, 5), visible_row_count(5));
+    try std.testing.expectEqual(@as(i32, 0), visible_row_count(0));
+}
+
+test "row count never goes negative" {
+    try std.testing.expectEqual(@as(i32, 0), visible_row_count(-3));
+}
+
+test "narrow boundary is strict at the threshold" {
+    try std.testing.expect(is_narrow(479));
+    try std.testing.expect(!is_narrow(480));
+    try std.testing.expect(is_narrow(390));
+    try std.testing.expect(!is_narrow(800));
+}
+
+test "badge labels cover every decision and fail closed" {
+    try std.testing.expectEqualStrings("ALLOW", badge_label(0));
+    try std.testing.expectEqualStrings("DENY", badge_label(1));
+    try std.testing.expectEqualStrings("DENY RATE", badge_label(2));
+    try std.testing.expectEqualStrings("UNKNOWN", badge_label(99));
+}
+
+test "badge tokens are design-system tokens and fail closed" {
+    try std.testing.expectEqualStrings(BADGE_TOKEN_ALLOW, badge_color_token(0));
+    try std.testing.expectEqualStrings(BADGE_TOKEN_DENY, badge_color_token(1));
+    try std.testing.expectEqualStrings(BADGE_TOKEN_DENY, badge_color_token(2));
+    try std.testing.expectEqualStrings(BADGE_TOKEN_DENY, badge_color_token(99));
+}
+
+test "option lists keep the pinned shapes" {
+    try std.testing.expectEqual(@as(usize, 5), TOOL_OPTIONS.len);
+    try std.testing.expectEqual(@as(usize, 4), DECISION_OPTIONS.len);
+    try std.testing.expect(LABEL_RETRY.len > 0);
+}
+
+test "tool options beyond All are exactly the audit producers" {
+    try std.testing.expectEqualStrings("cdp.observe", TOOL_OPTIONS[1]);
+    try std.testing.expectEqualStrings("dsh.status", TOOL_OPTIONS[2]);
+    try std.testing.expectEqualStrings("gateway.status", TOOL_OPTIONS[3]);
+    try std.testing.expectEqualStrings("gateway.policy.audit", TOOL_OPTIONS[4]);
+}

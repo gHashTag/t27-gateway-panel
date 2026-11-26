@@ -1,0 +1,590 @@
+; SPDX-License-Identifier: Apache-2.0
+; spec/gateway_logic.t27 -- the audit-panel law of the @local/t27-gateway
+; DSH plugin (migration: hand-written index.js/client.js -> generated
+; artifacts, task t27-gateway-panel).
+; -
+; Everything the panel may accept, filter, count and cut from the gateway
+; audit stream is decided HERE. The host (index.js) only frames: it reads
+; the log file, splits lines, and calls the panel API. Fail closed.
+; -
+; AUDIT RECORD LAW (mcp/gateway/schema.md + mcp/gateway/policy.t27):
+; TAB-separated, exactly FIELD_COUNT fields:
+;   ts (epoch seconds, digits only), actor, tool (a row of TOOLS),
+;   scope (loopback port string), decision (u8: 0 allow, 1 deny,
+;   2 deny-rate), reason (u8: 0 iff allowed, else an op code >= 10),
+;   request_hash (u64 fingerprint, carried as a decimal STRING -- a JS
+;   Number would lose u64 precision, so it is never parsed to a number).
+; -
+; TOOL LAW. TOOLS is the gateway policy table in policy order (the panel
+; shows it in this order too). An audit line, however, admits only tools
+; that can legitimately APPEAR in the gateway audit stream -- the audit
+; producer subset AUDIT_TOOLS, proven by the fixtures: cdp.observe,
+; dsh.status, gateway.status, gateway.policy.audit. gateway.metrics and
+; the other policy rows are not audit producers, so a line carrying one is
+; refused with reason code 4 even though the tool is a known policy row.
+; Distinct codes keep every rejection class separately testable and
+; separately reportable.
+; -
+; AUDIT_TAIL_LINES = 60. RETENTION_MAX_LINES is 4096
+; (mcp/gateway/log_contract.t27) -- that is the archive bound and it stays
+; the archive's business. The panel shows a tail, not the archive: 60
+; recent decisions is one full screen of the stream; rendering 4096 rows
+; in the panel is not retention, it is a misread of the law. The number is
+; a panel law, so it is decided here, next to the rest of the panel law.
+; -
+; PLATFORM BRIDGE (documented exception, not a hidden workaround).
+; t27c 0.5.2 `gen-js` emits data, never code: any fn whose body indexes a
+; string or loops is refused (measured 2026-11-26, /Users/playra/.cargo/bin/t27c
+; 0.5.2 build 0: "a StmtWhile in fn <name> at line 0 is more body than this
+; backend lowers"; earlier builds worded it "ExprIndex ... is not a constant
+; expression. This backend emits data, never code." -- see __NOT_EMITTED__ in
+; the artifact for the current refusal). Fixtures: /tmp/probe3.t27,
+; /tmp/probe4.t27; scalar-identity fns lower, real logic does not. This
+; spec therefore holds the COMPLETE law as fns proven by its own test
+; blocks below (t27c test-report), and emits the DATA the artifact needs:
+; thresholds, tables, reason-code texts, fixture vectors. The artifact
+; generated/gateway_logic.mjs is the gen-js output plus ONE clearly marked
+; composition section appended at its end that applies the law mechanically
+; with no rule of its own; every threshold, table and reason text it uses
+; comes from the consts emitted here, and the section header names the exact
+; refit procedure for the day gen-js lowers indexed bodies. The control-law duplication in that
+; bridge is the documented t27c gap, reported to the lead, not a design
+; choice. ASCII only (L3); tests prove the law (L4); gen-c string traps
+; respected (explicit lengths, no .len, no == on str).
+
+module GatewayLogicPanel;
+
+; -- panel tail law -------------------------------------------------------
+pub const AUDIT_TAIL_LINES : u32 = 60;
+; archive bound, not the panel law
+pub const RETENTION_MAX_LINES : u32 = 4096;
+
+; -- record shape ---------------------------------------------------------
+pub const FIELD_COUNT : u32 = 7;
+pub const TS_FIELD : u32 = 0;
+pub const ACTOR_FIELD : u32 = 1;
+pub const TOOL_FIELD : u32 = 2;
+pub const SCOPE_FIELD : u32 = 3;
+pub const DECISION_FIELD : u32 = 4;
+pub const REASON_FIELD : u32 = 5;
+pub const HASH_FIELD : u32 = 6;
+pub const TAB : u8 = 9;
+
+; -- gateway policy tools, policy order (mcp/gateway/policy.t27) ----------
+pub const TOOL_COUNT : u32 = 10;
+pub const TOOL_NAMES : [10]str = [
+    "gateway.status", "dsh.status", "cdp.observe", "gateway.metrics",
+    "gateway.health", "gateway.policy.audit", "gateway.config.get",
+    "gateway.routes.list", "gateway.version", "gateway.logs.head",
+];
+pub const TOOL_LENS : [10]u32 = [14, 10, 11, 15, 14, 20, 18, 19, 15, 17];
+
+; -- audit producer subset: tools that may appear in the audit stream -----
+pub const AUDIT_TOOL_COUNT : u32 = 4;
+pub const AUDIT_TOOLS : [4]str = [
+    "cdp.observe", "dsh.status", "gateway.status", "gateway.policy.audit",
+];
+pub const AUDIT_TOOL_LENS : [4]u32 = [11, 10, 14, 20];
+
+; -- decisions ------------------------------------------------------------
+pub const DECISION_ALLOW : u8 = 0;
+pub const DECISION_DENY : u8 = 1;
+pub const DECISION_DENY_RATE : u8 = 2;
+
+; -- reasons --------------------------------------------------------------
+pub const REASON_NONE : u8 = 0;
+; deny reasons are op codes >= 10
+pub const REASON_MIN_DENY : u8 = 10;
+pub const DENY_PROC_SPAWN : u8 = 10;
+pub const DENY_FILE_WRITE : u8 = 11;
+pub const DENY_CREDENTIAL : u8 = 12;
+pub const DENY_BROWSER_ACT : u8 = 13;
+pub const DENY_SELF_MODIFY : u8 = 14;
+pub const DENY_UNKNOWN : u8 = 255;
+
+; -- rejection codes (audit_line_reason); REASON_TEXTS is emitted data ----
+pub const LINE_OK : u8 = 0;
+pub const REJ_FIELD_COUNT : u8 = 1;
+pub const REJ_TS : u8 = 2;
+pub const REJ_UNKNOWN_TOOL : u8 = 3;
+pub const REJ_NOT_PRODUCER : u8 = 4;
+pub const REJ_DECISION : u8 = 5;
+pub const REJ_INCONSISTENT : u8 = 6;
+pub const REJ_HASH : u8 = 7;
+pub const REASON_TEXT_COUNT : u32 = 8;
+pub const REASON_TEXTS : [8]str = [
+    "", "bad_field_count", "bad_ts", "unknown_tool",
+    "tool_not_audit_producer", "bad_decision", "inconsistent_reason",
+    "bad_request_hash",
+];
+
+; -- fixture vectors (byte-for-byte = test/fixtures/audit-*.log) ----------
+; measured byte lengths: 48, 47, 52, 61 / 44, 47, 41
+pub const FIX_VALID_1 : str = "1762798000\tqueen\tcdp.observe\t9222\t0\t0\t2854501129";
+pub const FIX_VALID_2 : str = "1762798005\tbee-7\tdsh.status\t3081\t1\t12\t193827144";
+pub const FIX_VALID_3 : str = "1762798010\tqueen\tgateway.status\t3081\t2\t255\t741923857";
+pub const FIX_VALID_4 : str = "1762798015\tclaude-ab12\tgateway.policy.audit\t3081\t0\t0\t99182735";
+pub const FIX_BAD_1 : str = "not-a-number\textra\tgateway.status\t3081\t0\t0\t1";
+pub const FIX_BAD_2 : str = "1762798005\tbee-7\tgateway.metrics\t3081\t0\t0\t12345";
+pub const FIX_BAD_3 : str = "1762798006\tqueen\tgateway.metrics\t3081\t0\t0";
+// FIX_BAD_4: a deny row whose reason field is not a number. The field count,
+// the tool and the decision are all fine, so only the reason-shape law can
+// refuse it; a parse that let it through would fail this test open.
+pub const FIX_BAD_4 : str = "1762798007\tbee-7\tcdp.observe\t9222\t1\tx\t5";
+pub const FIX_V1_LEN : u32 = 48;
+pub const FIX_V2_LEN : u32 = 47;
+pub const FIX_V3_LEN : u32 = 52;
+pub const FIX_V4_LEN : u32 = 61;
+pub const FIX_B1_LEN : u32 = 44;
+pub const FIX_B2_LEN : u32 = 47;
+pub const FIX_B3_LEN : u32 = 41;
+pub const FIX_B4_LEN : u32 = 39;
+
+; -- string equality, byte-wise, explicit lengths (no == on str) ----------
+pub fn str_eq(a : str, alen : u32, b : str, blen : u32) -> bool {
+    if (alen != blen) { return false; }
+    var k : u32 = 0;
+    while (k < alen) {
+        if (a[k] != b[k]) { return false; }
+        k += 1;
+    }
+    return true;
+}
+
+; -- field geometry: TAB-separated spans, fail closed ---------------------
+pub fn field_start(line : str, llen : u32, idx : u32) -> u32 {
+    if (idx >= FIELD_COUNT) { return 0; }
+    var f : u32 = 0;
+    var s : u32 = 0;
+    while (s < llen and f < idx) {
+        if (line[s] == TAB) { f += 1; }
+        s += 1;
+    }
+    // fewer fields than asked: out of range
+    if (f < idx) { return llen + 1; }
+    return s;
+}
+
+pub fn field_len(line : str, llen : u32, idx : u32) -> u32 {
+    var from : u32 = field_start(line, llen, idx);
+    if (from > llen) { return 0; }
+    var e : u32 = from;
+    while (e < llen and line[e] != TAB) { e += 1; }
+    return e - from;
+}
+
+pub fn field_count(line : str, llen : u32) -> u32 {
+    var n : u32 = 1;
+    var i : u32 = 0;
+    while (i < llen) {
+        if (line[i] == TAB) { n += 1; }
+        i += 1;
+    }
+    return n;
+}
+
+pub fn field_bytes_eq(line : str, llen : u32, idx : u32, s : str, slen : u32) -> bool {
+    var from : u32 = field_start(line, llen, idx);
+    var n : u32 = field_len(line, llen, idx);
+    if (n != slen) { return false; }
+    var k : u32 = 0;
+    while (k < slen) {
+        if (line[from + k] != s[k]) { return false; }
+        k += 1;
+    }
+    return true;
+}
+
+; -- per-field law --------------------------------------------------------
+pub fn ts_digits_ok(line : str, llen : u32) -> bool {
+    var from : u32 = field_start(line, llen, TS_FIELD);
+    var n : u32 = field_len(line, llen, TS_FIELD);
+    if (n == 0 or n > 10) { return false; }
+    var k : u32 = 0;
+    while (k < n) {
+        if (line[from + k] < '0' or line[from + k] > '9') { return false; }
+        k += 1;
+    }
+    return true;
+}
+
+pub fn ts_value(line : str, llen : u32) -> u32 {
+    if (ts_digits_ok(line, llen) == false) { return 0; }
+    var from : u32 = field_start(line, llen, TS_FIELD);
+    var n : u32 = field_len(line, llen, TS_FIELD);
+    var v : u32 = 0;
+    var k : u32 = 0;
+    while (k < n) {
+        v = v * 10 + (line[from + k] - '0');
+        k += 1;
+    }
+    return v;
+}
+
+pub fn tool_known(s : str, slen : u32) -> bool {
+    var t : u32 = 0;
+    while (t < TOOL_COUNT) {
+        if (str_eq(TOOL_NAMES[t], TOOL_LENS[t], s, slen)) { return true; }
+        t += 1;
+    }
+    return false;
+}
+
+pub fn tool_is_producer(s : str, slen : u32) -> bool {
+    var t : u32 = 0;
+    while (t < AUDIT_TOOL_COUNT) {
+        if (str_eq(AUDIT_TOOLS[t], AUDIT_TOOL_LENS[t], s, slen)) { return true; }
+        t += 1;
+    }
+    return false;
+}
+
+pub fn tool_known_span(line : str, llen : u32, idx : u32) -> bool {
+    var t : u32 = 0;
+    while (t < TOOL_COUNT) {
+        if (field_bytes_eq(line, llen, idx, TOOL_NAMES[t], TOOL_LENS[t])) { return true; }
+        t += 1;
+    }
+    return false;
+}
+
+pub fn decision_of_line(line : str, llen : u32) -> u8 {
+    var from : u32 = field_start(line, llen, DECISION_FIELD);
+    var n : u32 = field_len(line, llen, DECISION_FIELD);
+    if (n != 1) { return 255; }
+    var b : u8 = line[from];
+    if (b < '0' or b > '9') { return 255; }
+    return b - '0';
+}
+
+// reason field: 1..3 ASCII digits, value <= 255. A malformed reason must
+// fail the line (fail closed), not silently turn into 255.
+pub fn reason_field_ok(line : str, llen : u32) -> bool {
+    var from : u32 = field_start(line, llen, REASON_FIELD);
+    var n : u32 = field_len(line, llen, REASON_FIELD);
+    if (n == 0 or n > 3) { return false; }
+    var v : u32 = 0;
+    var k : u32 = 0;
+    while (k < n) {
+        var b : u8 = line[from + k];
+        if (b < '0' or b > '9') { return false; }
+        v = v * 10 + (b - '0');
+        k += 1;
+    }
+    return v <= 255;
+}
+
+pub fn reason_of_line(line : str, llen : u32) -> u8 {
+    var from : u32 = field_start(line, llen, REASON_FIELD);
+    var n : u32 = field_len(line, llen, REASON_FIELD);
+    if (n == 0 or n > 3) { return 255; }
+    var v : u32 = 0;
+    var k : u32 = 0;
+    while (k < n) {
+        var b : u8 = line[from + k];
+        if (b < '0' or b > '9') { return 255; }
+        v = v * 10 + (b - '0');
+        k += 1;
+    }
+    if (v > 255) { return 255; }
+    return v as u8;
+}
+
+pub fn hash_digits_ok(line : str, llen : u32) -> bool {
+    var from : u32 = field_start(line, llen, HASH_FIELD);
+    var n : u32 = field_len(line, llen, HASH_FIELD);
+    if (n == 0 or n > 20) { return false; }
+    var k : u32 = 0;
+    while (k < n) {
+        if (line[from + k] < '0' or line[from + k] > '9') { return false; }
+        k += 1;
+    }
+    return true;
+}
+
+; -- consistency law: decision 0 <=> reason 0; decision 1|2 => reason >= 10
+pub fn consistent(decision : u8, reason : u8) -> bool {
+    if (decision == DECISION_ALLOW) { return reason == REASON_NONE; }
+    if (decision == DECISION_DENY or decision == DECISION_DENY_RATE) {
+        return reason >= REASON_MIN_DENY;
+    }
+    return false;
+}
+
+; -- the whole line law: fail closed, earliest refusal wins ---------------
+pub fn audit_line_ok(line : str, llen : u32) -> bool {
+    return audit_line_reason(line, llen) == LINE_OK;
+}
+
+pub fn audit_line_reason(line : str, llen : u32) -> u8 {
+    if (field_count(line, llen) != FIELD_COUNT) { return REJ_FIELD_COUNT; }
+    if (ts_digits_ok(line, llen) == false) { return REJ_TS; }
+    if (tool_known_span(line, llen, TOOL_FIELD) == false) { return REJ_UNKNOWN_TOOL; }
+    var t_from : u32 = field_start(line, llen, TOOL_FIELD);
+    var t_len : u32 = field_len(line, llen, TOOL_FIELD);
+    if (tool_is_producer_span(line, t_from, t_len) == false) { return REJ_NOT_PRODUCER; }
+    var decision : u8 = decision_of_line(line, llen);
+    if (decision > DECISION_DENY_RATE) { return REJ_DECISION; }
+    if (reason_field_ok(line, llen) == false) { return REJ_INCONSISTENT; }
+    var reason : u8 = reason_of_line(line, llen);
+    if (consistent(decision, reason) == false) { return REJ_INCONSISTENT; }
+    if (hash_digits_ok(line, llen) == false) { return REJ_HASH; }
+    return LINE_OK;
+}
+
+fn tool_is_producer_span(line : str, from : u32, n : u32) -> bool {
+    var t : u32 = 0;
+    while (t < AUDIT_TOOL_COUNT) {
+        if (AUDIT_TOOL_LENS[t] == n) {
+            var k : u32 = 0;
+            var eq : bool = true;
+            while (k < n) {
+                if (line[from + k] != AUDIT_TOOLS[t][k]) { eq = false; }
+                k += 1;
+            }
+            if (eq) { return true; }
+        }
+        t += 1;
+    }
+    return false;
+}
+
+; -- tail law -------------------------------------------------------------
+pub fn tail_start(total : u32, tail_lines : u32) -> u32 {
+    if (total <= tail_lines) { return 0; }
+    return total - tail_lines;
+}
+
+; -- filter law: AND of the non-null parts --------------------------------
+; Text rule, exactly: both spans are compared ASCII-lowercased byte-wise
+; ('A'..'Z' -> +32, other bytes untouched) and the needle must occur as a
+; contiguous lowercased substring of the actor span OR the tool span.
+; A not-set part matches everything (that is "null"): empty tool name,
+; f_set false, or an empty needle.
+pub fn ascii_lower(b : u8) -> u8 {
+    if (b >= 'A' and b <= 'Z') { return b + 32; }
+    return b;
+}
+
+pub fn span_contains_ci(line : str, from : u32, n : u32, needle : str, nlen : u32) -> bool {
+    if (nlen == 0) { return true; }
+    if (nlen > n) { return false; }
+    var s : u32 = 0;
+    while (s + nlen <= n) {
+        var k : u32 = 0;
+        var eq : bool = true;
+        while (k < nlen) {
+            if (ascii_lower(line[from + s + k]) != ascii_lower(needle[k])) { eq = false; }
+            k += 1;
+        }
+        if (eq) { return true; }
+        s += 1;
+    }
+    return false;
+}
+
+pub fn text_filter_matches(line : str, llen : u32, needle : str, nlen : u32) -> bool {
+    var a_from : u32 = field_start(line, llen, ACTOR_FIELD);
+    var a_len : u32 = field_len(line, llen, ACTOR_FIELD);
+    if (span_contains_ci(line, a_from, a_len, needle, nlen)) { return true; }
+    var t_from : u32 = field_start(line, llen, TOOL_FIELD);
+    var t_len : u32 = field_len(line, llen, TOOL_FIELD);
+    return span_contains_ci(line, t_from, t_len, needle, nlen);
+}
+
+pub fn tool_filter_matches(line : str, llen : u32, f_tool : str, ftlen : u32) -> bool {
+    if (ftlen == 0) { return true; }
+    return field_bytes_eq(line, llen, TOOL_FIELD, f_tool, ftlen);
+}
+
+pub fn decision_filter_matches(line : str, llen : u32, f_decision : u8, f_set : bool) -> bool {
+    if (f_set == false) { return true; }
+    return decision_of_line(line, llen) == f_decision;
+}
+
+pub fn event_matches_filter(
+    line : str, llen : u32,
+    f_tool : str, ftlen : u32,
+    f_decision : u8, f_set : bool,
+    f_text : str, fxtlen : u32,
+) -> bool {
+    if (tool_filter_matches(line, llen, f_tool, ftlen) == false) { return false; }
+    if (decision_filter_matches(line, llen, f_decision, f_set) == false) { return false; }
+    return text_filter_matches(line, llen, f_text, fxtlen);
+}
+
+; -- counts law: every decision lands in exactly one bucket, so
+; allow + deny + denyRate == total for any validated event list.
+pub fn bucket_of(decision : u8) -> u8 {
+    if (decision == DECISION_ALLOW) { return 0; }
+    if (decision == DECISION_DENY) { return 1; }
+    if (decision == DECISION_DENY_RATE) { return 2; }
+    // unreachable after audit_line_ok, kept fail-closed
+    return 3;
+}
+
+; -- tests: the fixtures are the vectors; a mutation must turn these red --
+test tail_lines_is_a_panel_law_below_retention {
+    assert AUDIT_TAIL_LINES == 60;
+    assert AUDIT_TAIL_LINES < RETENTION_MAX_LINES;
+}
+
+test tool_table_is_policy_order {
+    assert TOOL_COUNT == 10;
+    assert TOOL_LENS[0] == 14;
+    assert str_eq(TOOL_NAMES[0], TOOL_LENS[0], "gateway.status", 14) == true;
+    assert str_eq(TOOL_NAMES[1], TOOL_LENS[1], "dsh.status", 10) == true;
+    assert str_eq(TOOL_NAMES[2], TOOL_LENS[2], "cdp.observe", 11) == true;
+    assert str_eq(TOOL_NAMES[9], TOOL_LENS[9], "gateway.logs.head", 17) == true;
+    assert tool_known("gateway.status", 14) == true;
+    assert tool_known("gateway.logs.head", 17) == true;
+    assert tool_known("shell.run", 9) == false;
+    assert tool_known("gateway", 7) == false;
+}
+
+test producer_subset_is_inside_policy_table {
+    assert tool_is_producer("cdp.observe", 11) == true;
+    assert tool_is_producer("dsh.status", 10) == true;
+    assert tool_is_producer("gateway.status", 14) == true;
+    assert tool_is_producer("gateway.policy.audit", 20) == true;
+    // a policy row that is not an audit producer is still a known tool
+    assert tool_known("gateway.metrics", 15) == true;
+    assert tool_is_producer("gateway.metrics", 15) == false;
+}
+
+test four_valid_fixture_lines_parse {
+    assert audit_line_ok(FIX_VALID_1, FIX_V1_LEN) == true;
+    assert audit_line_ok(FIX_VALID_2, FIX_V2_LEN) == true;
+    assert audit_line_ok(FIX_VALID_3, FIX_V3_LEN) == true;
+    assert audit_line_ok(FIX_VALID_4, FIX_V4_LEN) == true;
+    assert audit_line_reason(FIX_VALID_1, FIX_V1_LEN) == LINE_OK;
+    assert ts_value(FIX_VALID_1, FIX_V1_LEN) == 1762798000;
+    assert field_bytes_eq(FIX_VALID_1, FIX_V1_LEN, ACTOR_FIELD, "queen", 5) == true;
+    assert field_bytes_eq(FIX_VALID_1, FIX_V1_LEN, SCOPE_FIELD, "9222", 4) == true;
+    assert decision_of_line(FIX_VALID_1, FIX_V1_LEN) == DECISION_ALLOW;
+    assert reason_of_line(FIX_VALID_2, FIX_V2_LEN) == DENY_CREDENTIAL;
+    assert decision_of_line(FIX_VALID_3, FIX_V3_LEN) == DECISION_DENY_RATE;
+    assert field_bytes_eq(FIX_VALID_4, FIX_V4_LEN, HASH_FIELD, "99182735", 8) == true;
+}
+
+test bad_field_count_fails_closed {
+    assert audit_line_ok(FIX_BAD_3, FIX_B3_LEN) == false;
+    assert audit_line_reason(FIX_BAD_3, FIX_B3_LEN) == REJ_FIELD_COUNT;
+    assert field_count(FIX_BAD_3, FIX_B3_LEN) == 6;
+}
+
+test bad_ts_fails_closed {
+    assert audit_line_ok(FIX_BAD_1, FIX_B1_LEN) == false;
+    assert audit_line_reason(FIX_BAD_1, FIX_B1_LEN) == REJ_TS;
+    assert ts_digits_ok(FIX_BAD_1, FIX_B1_LEN) == false;
+}
+
+test non_producer_policy_tool_is_refused {
+    // FIX_BAD_2 is otherwise a perfect line: 7 fields, digits, allow/none.
+    assert audit_line_ok(FIX_BAD_2, FIX_B2_LEN) == false;
+    assert audit_line_reason(FIX_BAD_2, FIX_B2_LEN) == REJ_NOT_PRODUCER;
+    assert field_count(FIX_BAD_2, FIX_B2_LEN) == FIELD_COUNT;
+    assert ts_digits_ok(FIX_BAD_2, FIX_B2_LEN) == true;
+}
+
+test consistency_runs_both_ways {
+    assert consistent(DECISION_ALLOW, REASON_NONE) == true;
+    assert consistent(DECISION_ALLOW, DENY_FILE_WRITE) == false;
+    assert consistent(DECISION_DENY, REASON_NONE) == false;
+    assert consistent(DECISION_DENY, DENY_CREDENTIAL) == true;
+    assert consistent(DECISION_DENY_RATE, DENY_UNKNOWN) == true;
+    assert consistent(DECISION_DENY_RATE, 9) == false;
+    // through the whole-line law: deny + 12 and denyRate + 255 both pass
+    assert audit_line_reason(FIX_VALID_2, FIX_V2_LEN) == LINE_OK;
+    assert audit_line_reason(FIX_VALID_3, FIX_V3_LEN) == LINE_OK;
+    // the reason codes are two-digit numbers; a one-digit law would have
+    // turned 12 into a rejection or a silent 255
+    assert reason_of_line(FIX_VALID_2, FIX_V2_LEN) == DENY_CREDENTIAL;
+    assert reason_of_line(FIX_VALID_3, FIX_V3_LEN) == DENY_UNKNOWN;
+    // a reason that is not a number must fail the whole line (fail closed),
+    // not pass as a fake DENY_UNKNOWN
+    assert reason_field_ok(FIX_BAD_4, FIX_B4_LEN) == false;
+    assert audit_line_reason(FIX_BAD_4, FIX_B4_LEN) == REJ_INCONSISTENT;
+    assert audit_line_ok(FIX_BAD_4, FIX_B4_LEN) == false;
+}
+
+test request_hash_is_digits_only {
+    assert hash_digits_ok(FIX_VALID_1, FIX_V1_LEN) == true;
+    assert hash_digits_ok(FIX_BAD_2, FIX_B2_LEN) == true;
+}
+
+test tail_cuts_from_the_end {
+    assert tail_start(250, AUDIT_TAIL_LINES) == 190;
+    assert tail_start(60, AUDIT_TAIL_LINES) == 0;
+    assert tail_start(4, AUDIT_TAIL_LINES) == 0;
+    assert tail_start(0, AUDIT_TAIL_LINES) == 0;
+    assert tail_start(250, 0) == 250;
+    assert tail_start(1, 1) == 0;
+}
+
+test filter_parts_and_together {
+    // more than one candidate row: lines 1 and 4 both survive a null
+    // filter, so the AND is distinguishable from a single-row law.
+    assert event_matches_filter(FIX_VALID_1, FIX_V1_LEN, "", 0, DECISION_ALLOW, false, "", 0) == true;
+    assert event_matches_filter(FIX_VALID_4, FIX_V4_LEN, "", 0, DECISION_ALLOW, false, "", 0) == true;
+    assert event_matches_filter(FIX_VALID_2, FIX_V2_LEN, "", 0, DECISION_ALLOW, false, "", 0) == true;
+    // tool filter alone
+    assert event_matches_filter(FIX_VALID_1, FIX_V1_LEN, "cdp.observe", 11, 0, false, "", 0) == true;
+    assert event_matches_filter(FIX_VALID_3, FIX_V3_LEN, "cdp.observe", 11, 0, false, "", 0) == false;
+    // decision filter alone: two allow rows exist (1 and 4)
+    assert event_matches_filter(FIX_VALID_1, FIX_V1_LEN, "", 0, DECISION_ALLOW, true, "", 0) == true;
+    assert event_matches_filter(FIX_VALID_4, FIX_V4_LEN, "", 0, DECISION_ALLOW, true, "", 0) == true;
+    assert event_matches_filter(FIX_VALID_2, FIX_V2_LEN, "", 0, DECISION_ALLOW, true, "", 0) == false;
+    // AND: tool cdp.observe AND decision allow -> only line 1
+    assert event_matches_filter(FIX_VALID_1, FIX_V1_LEN, "cdp.observe", 11, DECISION_ALLOW, true, "", 0) == true;
+    assert event_matches_filter(FIX_VALID_4, FIX_V4_LEN, "cdp.observe", 11, DECISION_ALLOW, true, "", 0) == false;
+    // text: case-insensitive ASCII, actor OR tool
+    assert text_filter_matches(FIX_VALID_2, FIX_V2_LEN, "BEE", 3) == true;
+    assert text_filter_matches(FIX_VALID_2, FIX_V2_LEN, "dsh.stat", 8) == true;
+    assert text_filter_matches(FIX_VALID_1, FIX_V1_LEN, "bee", 3) == false;
+    // AND of all three: only line 1 passes all at once
+    assert event_matches_filter(FIX_VALID_1, FIX_V1_LEN, "cdp.observe", 11, DECISION_ALLOW, true, "queen", 5) == true;
+}
+
+test buckets_partition_the_total {
+    assert bucket_of(DECISION_ALLOW) == 0;
+    assert bucket_of(DECISION_DENY) == 1;
+    assert bucket_of(DECISION_DENY_RATE) == 2;
+    assert bucket_of(3) == 3;
+    // the four fixtures land 2 + 1 + 1 = 4: allow + deny + denyRate == total
+    var b1 : u8 = bucket_of(decision_of_line(FIX_VALID_1, FIX_V1_LEN));
+    var b2 : u8 = bucket_of(decision_of_line(FIX_VALID_2, FIX_V2_LEN));
+    var b3 : u8 = bucket_of(decision_of_line(FIX_VALID_3, FIX_V3_LEN));
+    var b4 : u8 = bucket_of(decision_of_line(FIX_VALID_4, FIX_V4_LEN));
+    var allow : u32 = 0;
+    var deny : u32 = 0;
+    var rate : u32 = 0;
+    if (b1 == 0) { allow += 1; }
+    if (b1 == 1) { deny += 1; }
+    if (b1 == 2) { rate += 1; }
+    if (b2 == 0) { allow += 1; }
+    if (b2 == 1) { deny += 1; }
+    if (b2 == 2) { rate += 1; }
+    if (b3 == 0) { allow += 1; }
+    if (b3 == 1) { deny += 1; }
+    if (b3 == 2) { rate += 1; }
+    if (b4 == 0) { allow += 1; }
+    if (b4 == 1) { deny += 1; }
+    if (b4 == 2) { rate += 1; }
+    assert allow == 2;
+    assert deny == 1;
+    assert rate == 1;
+    assert allow + deny + rate == 4;
+}
+
+test reason_texts_are_emitted_data {
+    assert REASON_TEXT_COUNT == 8;
+    assert str_eq(REASON_TEXTS[REJ_FIELD_COUNT], 15, "bad_field_count", 15) == true;
+    assert str_eq(REASON_TEXTS[REJ_TS], 6, "bad_ts", 6) == true;
+    assert str_eq(REASON_TEXTS[REJ_UNKNOWN_TOOL], 12, "unknown_tool", 12) == true;
+    assert str_eq(REASON_TEXTS[REJ_NOT_PRODUCER], 23, "tool_not_audit_producer", 23) == true;
+    assert str_eq(REASON_TEXTS[REJ_DECISION], 12, "bad_decision", 12) == true;
+    assert str_eq(REASON_TEXTS[REJ_INCONSISTENT], 19, "inconsistent_reason", 19) == true;
+    assert str_eq(REASON_TEXTS[REJ_HASH], 16, "bad_request_hash", 16) == true;
+    assert str_eq(REASON_TEXTS[LINE_OK], 0, "", 0) == true;
+}

@@ -9,7 +9,19 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { AUDIT_TAIL_LINES, parseAuditLine } from './generated/gateway_logic.mjs';
+import {
+  AUDIT_TAIL_LINES,
+  countByDecision,
+  filterEvents,
+  parseAuditLine,
+} from './generated/gateway_logic.mjs';
+// Decision labels are UI-law consts from the generated UI artifact; the host
+// maps the query's label back to the law's decision code without inventing a
+// copy of either list.
+import { DECISION_OPTIONS } from './generated/gateway_ui.mjs';
+// The pinned contract test imports the tail bound from the Host half, so the
+// generated constant is re-exported here rather than read from the artifact.
+export { AUDIT_TAIL_LINES };
 
 const PKG_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -96,9 +108,42 @@ export function apply(ctx) {
   const serveAudit = (req, res) => {
     if (rejected(req, res)) return;
     if (req.method !== 'GET') return sendMethodNotAllowed(res, 'GET');
+    const tail = readAuditTail(findAuditLog());
+    // Filtering is the generated law applied SERVER-SIDE (filterEvents): the
+    // client sends raw query parameters and owns no rule of its own. A
+    // decision label outside the generated list is refused (400) instead of
+    // being silently dropped, so the panel can never show an unfiltered view
+    // while believing it is filtered.
+    const url = new URL(req.url, 'http://127.0.0.1');
+    const toolParam = url.searchParams.get('tool');
+    const decisionParam = url.searchParams.get('decision');
+    const textParam = url.searchParams.get('text');
+    let decisionCode = null;
+    if (decisionParam !== null && decisionParam !== '' && decisionParam !== DECISION_OPTIONS[0]) {
+      decisionCode = DECISION_OPTIONS.indexOf(decisionParam) - 1;
+      if (decisionCode < 0) {
+        return sendJson(res, 400, {
+          error: 'invalid decision filter',
+          expected: DECISION_OPTIONS,
+        });
+      }
+    }
+    const filter = {
+      tool: toolParam === null || toolParam === '' ? null : toolParam,
+      decision: decisionCode,
+      text: textParam === null || textParam === '' ? null : textParam,
+    };
+    const events = filterEvents(tail.events, filter);
     sendJson(res, 200, {
       contractVersion: CONTRACT_VERSION,
-      ...readAuditTail(findAuditLog()),
+      source: tail.source,
+      total: tail.total,
+      dropped: tail.dropped,
+      events,
+      // Decision counters over the SAME filtered events the panel renders
+      // (not the whole file): the view model must never claim more than it
+      // shows. Counting is the generated countByDecision, not a hand tally.
+      counters: countByDecision(events),
     });
   };
 

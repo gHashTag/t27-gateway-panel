@@ -13,7 +13,13 @@ kept under `legacy/` for reference and must never ship.
 ## Routes (host half, GET only, auth-fenced)
 
 - `/api/t27-gateway/audit` → `{ contractVersion, source:{path,present,reason},
-  events:[{ts,actor,tool,scope,decision,reason,requestHash}], total, dropped }`
+  events:[{ts,actor,tool,scope,decision,reason,requestHash}], total, dropped,
+  counters:{allow,deny,denyRate,total} }`
+  - Query filters (all optional): `tool=<exact tool name>`, `decision=<label
+    from DECISION_OPTIONS[1..]>`, `text=<case-insensitive substring over actor
+    or tool>`. Unknown `decision` label → 400 with the expected list. The host
+    applies the generated `filterEvents` — the client owns no filtering rule.
+  - `counters` is counted over the SAME filtered event set the panel renders.
 - `/api/t27-gateway/health` → `{ host:'local', idempotent:true, mutating:false,
   contractVersion, checks:[…], anomalies:[…] }`
 
@@ -46,6 +52,32 @@ node --test test/          # tests alone (imports the generated modules)
 ```
 
 `generated/` is a build artifact, gitignored, never hand-written or hand-copied.
+
+## Generated surface and platform bridges
+
+The gen-js backend lowers scalar parameters and scalar returns only. Every
+rule — thresholds, labels, option lists, tokens, state resolution, filtering —
+compiles out of the specs. Two mechanical composition layers exist around that
+boundary, and they are the only places JS holds logic-shaped code:
+
+1. `bridge/gateway_logic_bridge.mjs` — appended to the fresh `t27c gen-js`
+   output by `scripts/build.sh` (byte-identical assembly, verified by `cmp`).
+   It composes the runtime API (`parseAuditLine`, `filterEvents`,
+   `countByDecision`, `applyTail`) out of generated consts; every threshold,
+   table and reason string in it is an emitted const from
+   `spec/gateway_logic.t27` (13/13 tests, 0 vacuous).
+2. `scripts/emit_client_gateway_ui.mjs` — turns `generated/gateway_ui.mjs`
+   into the loadable classic-script chunk `client.gateway_ui.js`
+   (`__ModuleLoader__.load`, chunk id
+   `@local/t27-gateway/client.gateway_ui.js`). It refuses to emit when the
+   generator's `__NOT_EMITTED__` list is non-empty or a `__DECL_ORDER__` name
+   is missing from the body. `client.js` then renders only from that chunk's
+   generated scalars — the object assembly (`buildViewModel` equivalent) is
+   this documented bridge exception; nothing in the client may decide a
+   threshold, a label or a token.
+
+A refit procedure: fix the spec, run `sh scripts/build.sh`; the build
+regenerates both artifacts and re-assembles both bridges.
 
 ## Install (DSH)
 

@@ -13,6 +13,10 @@
   "files": [
     "index.js",
     "client.js",
+    "client.gateway_ui.js",
+    "bridge/gateway_logic_bridge.mjs",
+    "scripts/build.sh",
+    "scripts/emit_client_gateway_ui.mjs",
     "cordis.patch.yml",
     "generated/gateway_logic.mjs",
     "generated/gateway_ui.mjs",
@@ -24,7 +28,7 @@
   ],
   "scripts": {
     "build": "sh scripts/build.sh",
-    "test": "node --test test/"
+    "test": "node --test test/*.test.mjs"
   },
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },

@@ -1,84 +1,144 @@
 // Contract tests for the UI artifact (generated/gateway_ui.mjs).
-// These pin the viewmodel interface between spec and client BEFORE the spec
-// exists; they are red until scripts/build.sh produces the artifact.
+// gen-js lowers scalars only, so the pinned surface is the scalar law: state
+// kinds, the row cap, the narrow bound, badge labels and token NAMES, and the
+// option/label lists the client composes with. Object assembly lives in the
+// client as the documented platform-bridge exception; these tests pin every
+// value it is allowed to consume.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   VIEW_MAX_ROWS,
-  resolvePanelState,
-  buildViewModel,
-  LABEL_RETRY,
+  NARROW_MAX_WIDTH_PX,
   TOOL_OPTIONS,
   DECISION_OPTIONS,
+  LABEL_TITLE,
+  LABEL_RETRY,
+  LABEL_EMPTY,
+  LABEL_ERROR,
+  LABEL_SOURCE_ABSENT,
+  LABEL_COUNTERS_TEMPLATE,
+  LABEL_DROPPED_TEMPLATE,
+  LABEL_TOOL_ALL,
+  LABEL_DECISION_ALL,
+  BADGE_TOKEN_ALLOW,
+  BADGE_TOKEN_DENY,
+  STYLE_TOKEN_TEXT_SECONDARY,
+  STYLE_TOKEN_BORDER,
+  STYLE_TOKEN_BG,
+  is_narrow,
+  visible_row_count,
+  resolve_state_kind,
+  state_detail,
+  badge_label,
+  badge_color_token,
 } from '../generated/gateway_ui.mjs';
 
-const EVENTS = [
-  { ts: 1762798000, actor: 'queen', tool: 'cdp.observe', scope: '9222', decision: 0, reason: 0, requestHash: '2854501129' },
-  { ts: 1762798005, actor: 'bee-7', tool: 'dsh.status', scope: '3081', decision: 1, reason: 12, requestHash: '193827144' },
-];
+// State kinds as the spec defines them: 0 ready, 1 error, 2 source-absent,
+// 3 empty. The client maps these to labels with the same constants, so the
+// four kinds must stay pairwise distinct.
+const KIND_READY = 0;
+const KIND_ERROR = 1;
+const KIND_SOURCE_ABSENT = 2;
+const KIND_EMPTY = 3;
 
-const READY_INPUT = {
-  state: 'ready',
-  events: EVENTS,
-  counters: { allow: 1, deny: 1, denyRate: 0, total: 2 },
-  dropped: 0,
-  filter: { tool: null, decision: null, text: null },
-  widthPx: 800,
-};
-
-test('fetch failure maps to error, never to a fake empty state', () => {
-  const vm = resolvePanelState({ ok: false, status: 404 });
-  assert.equal(vm.state, 'error');
-  assert.equal(typeof vm.detail, 'string');
-  assert.notEqual(vm.state, 'empty');
+test('state law: failure, absent source, empty and ready are four distinct kinds', () => {
+  assert.equal(resolve_state_kind(false, false, 0), KIND_ERROR);
+  assert.equal(resolve_state_kind(true, false, 0), KIND_SOURCE_ABSENT);
+  assert.equal(resolve_state_kind(true, true, 0), KIND_EMPTY);
+  assert.equal(resolve_state_kind(true, true, 2), KIND_READY);
+  const distinct = new Set([
+    resolve_state_kind(false, false, 0),
+    resolve_state_kind(true, false, 0),
+    resolve_state_kind(true, true, 0),
+    resolve_state_kind(true, true, 2),
+  ]);
+  assert.equal(distinct.size, 4);
 });
 
-test('absent source is its own state, distinct from empty', () => {
-  const absent = resolvePanelState({
-    ok: true,
-    payload: { source: { present: false, path: '/x', reason: 'absent' }, events: [], total: 0, dropped: 0 },
-  });
-  assert.equal(absent.state, 'source-absent');
-  assert.equal(absent.detail.includes('/x'), true);
+test('source-absent detail carries the path; ready detail is empty', () => {
+  const detail = state_detail(KIND_SOURCE_ABSENT, 200, '/tmp/missing.log');
+  assert.equal(detail, '/tmp/missing.log');
+  assert.notEqual(detail.includes('/tmp/missing.log'), false);
+  assert.equal(state_detail(KIND_READY, 200, '/tmp/here.log'), '');
 });
 
-test('zero events is empty; non-empty is ready', () => {
-  assert.equal(resolvePanelState({ ok: true, payload: { source: { present: true }, events: [], total: 0, dropped: 0 } }).state, 'empty');
-  assert.equal(resolvePanelState({ ok: true, payload: { source: { present: true }, events: EVENTS, total: 2, dropped: 0 } }).state, 'ready');
+test('error detail names the transport, never a fake empty state', () => {
+  const http = state_detail(KIND_ERROR, 404, '/tmp/here.log');
+  const gateway = state_detail(KIND_ERROR, 200, '/tmp/here.log');
+  for (const detail of [http, gateway]) {
+    assert.equal(typeof detail, 'string');
+    assert.equal(detail.length > 0, true);
+    assert.notEqual(detail, '/tmp/here.log');
+  }
+  assert.notEqual(http, gateway);
 });
 
-test('rows are capped at VIEW_MAX_ROWS and every badge color is a token name', () => {
-  const many = Array.from({ length: 40 }, (_, i) => ({ ...EVENTS[0], ts: 1762798000 + i }));
-  const vm = buildViewModel({ ...READY_INPUT, events: many });
-  assert.equal(vm.rows.length <= VIEW_MAX_ROWS, true);
-  assert.equal(vm.rows.length, VIEW_MAX_ROWS);
-  for (const row of vm.rows) {
-    assert.equal(row.badge.colorToken.startsWith('--dsw-'), true);
-    assert.equal(typeof row.badge.label, 'string');
+test('rows are capped at VIEW_MAX_ROWS; below the cap every row survives', () => {
+  assert.equal(VIEW_MAX_ROWS, 12);
+  assert.equal(visible_row_count(0), 0);
+  assert.equal(visible_row_count(5), 5);
+  assert.equal(visible_row_count(VIEW_MAX_ROWS), VIEW_MAX_ROWS);
+  assert.equal(visible_row_count(40), VIEW_MAX_ROWS);
+});
+
+test('narrow boundary uses strict < per spec', () => {
+  // Spec: width_px < NARROW_MAX_WIDTH_PX — strict less-than.
+  assert.equal(is_narrow(NARROW_MAX_WIDTH_PX - 1), true);
+  assert.equal(is_narrow(NARROW_MAX_WIDTH_PX), false);
+  assert.equal(is_narrow(NARROW_MAX_WIDTH_PX + 1), false);
+  assert.equal(is_narrow(0), true, 'an unmeasured panel is narrow until proven wide');
+});
+
+test('every generated string the client renders is a token name or a label, never a literal color', () => {
+  const rendered = [
+    LABEL_TITLE,
+    LABEL_RETRY,
+    LABEL_EMPTY,
+    LABEL_ERROR,
+    LABEL_SOURCE_ABSENT,
+    LABEL_COUNTERS_TEMPLATE,
+    LABEL_DROPPED_TEMPLATE,
+    LABEL_TOOL_ALL,
+    LABEL_DECISION_ALL,
+    BADGE_TOKEN_ALLOW,
+    BADGE_TOKEN_DENY,
+    STYLE_TOKEN_TEXT_SECONDARY,
+    STYLE_TOKEN_BORDER,
+    STYLE_TOKEN_BG,
+  ].join('|');
+  assert.equal(rendered.includes('#'), false, 'a hex color leaked into the UI law');
+  assert.equal(rendered.includes('rgb('), false, 'an rgb() color leaked into the UI law');
+  for (const token of [STYLE_TOKEN_TEXT_SECONDARY, STYLE_TOKEN_BORDER, STYLE_TOKEN_BG]) {
+    assert.equal(token.startsWith('--dsw-'), true);
   }
 });
 
-test('narrow width hides the scoped cells instead of overflowing', () => {
-  const wide = buildViewModel(READY_INPUT);
-  const narrow = buildViewModel({ ...READY_INPUT, widthPx: 390 });
-  assert.equal(wide.narrow, false);
-  assert.equal(narrow.narrow, true);
-  for (const row of narrow.rows) {
-    for (const cell of row.cells) assert.notEqual(cell.hideWhenNarrow, true);
+test('counter and dropped templates keep the exact placeholders the client substitutes', () => {
+  for (const placeholder of ['{allow}', '{deny}', '{denyRate}', '{total}']) {
+    assert.equal(LABEL_COUNTERS_TEMPLATE.includes(placeholder), true, `missing ${placeholder}`);
   }
-  // The hidden cells must EXIST in the wide model (they exist and are dropped).
-  assert.equal(wide.rows[0].cells.some(c => c.hideWhenNarrow === true), true);
-});
-
-test('no hardcoded colors anywhere in the viewmodel', () => {
-  const vm = buildViewModel(READY_INPUT);
-  const text = JSON.stringify(vm);
-  assert.equal(text.includes('#'), false, 'hex color leaked into the viewmodel');
-  assert.equal(text.includes('rgb('), false, 'rgb() leaked into the viewmodel');
+  assert.equal(LABEL_DROPPED_TEMPLATE.includes('{dropped}'), true);
+  // Substitution over the generated template must not leave raw braces behind.
+  const countersLine = LABEL_COUNTERS_TEMPLATE
+    .replace('{allow}', '3')
+    .replace('{deny}', '1')
+    .replace('{denyRate}', '0')
+    .replace('{total}', '4');
+  assert.equal(countersLine.includes('{'), false);
 });
 
 test('choice lists offer more than the single current choice', () => {
-  assert.equal(TOOL_OPTIONS.length, 11); // All tools + 10 gateway tools
-  assert.equal(DECISION_OPTIONS.length, 4); // All + ALLOW + DENY + DENY RATE
+  // All + the four audit producers: an option that can never match is a lie.
+  assert.equal(TOOL_OPTIONS.length, 5);
+  assert.deepEqual([...TOOL_OPTIONS].slice(1), [
+    'cdp.observe',
+    'dsh.status',
+    'gateway.status',
+    'gateway.policy.audit',
+  ]);
+  assert.equal(TOOL_OPTIONS[0], LABEL_TOOL_ALL);
+  assert.equal(DECISION_OPTIONS.length, 4);
+  assert.equal(DECISION_OPTIONS[0], LABEL_DECISION_ALL);
   assert.equal(LABEL_RETRY.length > 0, true);
+  assert.equal(LABEL_TITLE.length > 0, true);
 });
