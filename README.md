@@ -38,20 +38,34 @@ from the package dir for `.trinity/gateway-audit.log` (≤ 8 levels).
 
 ## Producer status (measured 2026-11-25)
 
-Nothing in `/Users/playra/t27` currently writes `gateway-audit.log`: the M0
-gateway binary (`tri-mcp`) is not built anywhere on this machine and the
+Nothing in the t27 checkout currently writes `gateway-audit.log`: the M0
+gateway binary (`tri-mcp`) is not built on the measured machine and the
 `mcp-m0` worktree it lived in is gone. Until that binary is rebuilt, the panel
-truthfully renders the `source-absent` state with the expected path. Do not
-seed the log by hand — a fabricated audit trail is a lie.
+truthfully renders the `source-absent` state with the expected path and zero
+counters. Do not seed the log by hand — a fabricated audit trail is a lie.
+The measured chain of facts is in `docs/diagnosis-2026-11-26.md`.
+
 
 ## Build and test
 
 ```
 sh scripts/build.sh        # t27c check/test + gen-js into generated/, then node --test test/
-node --test test/          # tests alone (imports the generated modules)
+node --test test/*.test.mjs # tests alone (imports the generated modules)
 ```
 
-`generated/` is a build artifact, gitignored, never hand-written or hand-copied.
+`generated/gateway_logic.mjs`, `generated/gateway_ui.mjs` and
+`client.gateway_ui.js` are BUILD PRODUCTS: never hand-written, never
+hand-copied, always written by `scripts/build.sh`. They are committed so that
+a git install works on a machine without the `t27c` toolchain. Rebuild them
+after any spec change and commit the result — the contract tests read the
+generated modules, so a stale artifact fails the suite.
+
+`scripts/build.sh` needs `t27c` (the t27 compiler). It looks for
+`/Users/playra/.cargo/bin/t27c`; on another machine point it at yours:
+
+```
+T27C=/path/to/t27c sh scripts/build.sh
+```
 
 ## Generated surface and platform bridges
 
@@ -81,7 +95,41 @@ regenerates both artifacts and re-assembles both bridges.
 
 ## Install (DSH)
 
-`plugin_manager` → `install_bundle` with this absolute directory. Rollback:
-`remove_bundle @local/t27-gateway`. The patch inserts client id
+The panel is a DSH web plugin, id `@local/t27-gateway`. The build products are
+committed, so a git install needs no `t27c` toolchain — only Node 22+.
+
+```bash
+git clone https://github.com/gHashTag/t27-gateway-panel.git
+cd t27-gateway-panel
+node --test test/*.test.mjs        # optional self-check of the clone
+```
+
+Then install it into the DSH profile that runs the web app (the plugin
+manager needs an absolute path, or it clones the repository itself):
+
+```bash
+dsh plugin add link:/absolute/path/to/t27-gateway-panel   # from the clone
+dsh plugin add github:gHashTag/t27-gateway-panel          # straight from GitHub
+```
+
+The profile then needs the three rows the live profile carries:
+
+1. the dependency in `<profile>/package.json` — the plugin manager writes it;
+2. `"@local/t27-gateway"` in `dsh.profile.bundles`;
+3. `- id: t27-gateway` in `<profile>/cordis.patch.yml` to enable the plugin.
+
+Rollback: `dsh plugin remove @local/t27-gateway`.
+
+Restart the DSH web process after installing. The server memoises a plugin
+bundle on its first request, so a server that was already running keeps
+serving the previous bytes until it restarts.
+
+The panel's own `cordis.patch.yml` (the bundle patch) inserts the client id
 `t27-gateway-ui` → `@local/t27-gateway`; the panel mounts into the
 `conversation.composer.dock` slot (id `t27-gateway-dashboard`, order 6).
+
+The audit log is read from `T27_GATEWAY_AUDIT_PATH` if set, else from
+`.trinity/gateway-audit.log` found by walking up from the package directory.
+Without a producer the panel truthfully renders the `source-absent` state with
+zero counters; see `docs/diagnosis-2026-11-26.md` for the measured reasons.
+

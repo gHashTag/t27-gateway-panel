@@ -1,4 +1,9 @@
 legacy/
-generated/
 node_modules/
-client.gateway_ui.js
+
+# The generated artifacts are BUILD PRODUCTS: never hand-written, never
+# hand-copied, always written by scripts/build.sh (t27c gen-js plus the
+# emitter). They ARE committed, because the plugin is installed from this
+# repository as a git dependency and a git install must work on a machine
+# that has no t27c toolchain. Rebuild them with `sh scripts/build.sh` and
+# commit the result; a stale artifact fails test/gateway_ui.test.mjs.
