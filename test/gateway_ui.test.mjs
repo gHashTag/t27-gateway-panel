@@ -31,6 +31,8 @@ import {
   state_detail,
   badge_label,
   badge_color_token,
+  derive_content_width,
+  toolbar_wraps,
 } from '../generated/gateway_ui.mjs';
 
 // State kinds as the spec defines them: 0 ready, 1 error, 2 source-absent,
@@ -87,6 +89,19 @@ test('narrow boundary uses strict < per spec', () => {
   assert.equal(is_narrow(NARROW_MAX_WIDTH_PX), false);
   assert.equal(is_narrow(NARROW_MAX_WIDTH_PX + 1), false);
   assert.equal(is_narrow(0), true, 'an unmeasured panel is narrow until proven wide');
+});
+
+test('content width derives from root minus padding', () => {
+  assert.equal(derive_content_width(203), 179);
+  assert.equal(derive_content_width(395), 371);
+  assert.equal(derive_content_width(503), 479);
+});
+
+test('toolbar wraps when narrow', () => {
+  assert.equal(toolbar_wraps(479), true);
+  assert.equal(toolbar_wraps(480), false);
+  assert.equal(toolbar_wraps(390), true);
+  assert.equal(toolbar_wraps(800), false);
 });
 
 test('every generated string the client renders is a token name or a label, never a literal color', () => {

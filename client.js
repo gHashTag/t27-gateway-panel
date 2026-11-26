@@ -183,8 +183,8 @@ window.__ModuleLoader__.load({
         color: 'inherit',
       };
       const secondaryStyle = { color: 'var(' + ui.STYLE_TOKEN_TEXT_SECONDARY + ', inherit)' };
-      const selectStyle = { ...ellipsisStyle, maxWidth: 160 };
-      const inputStyle = { flex: '1 1 120px', minWidth: 80 };
+      const selectStyle = { ...ellipsisStyle, maxWidth: ui.TOOLBAR_CONTROL_MAX_PX };
+      const inputStyle = { flex: '1 1 120px', minWidth: ui.INPUT_MIN_WIDTH_PX };
 
       const rowNodes = rows.map((row) =>
         h(
@@ -228,7 +228,7 @@ window.__ModuleLoader__.load({
         h('div', { style: secondaryStyle }, countersLine),
         h(
           'div',
-          { style: { display: 'flex', gap: 8, alignItems: 'center', margin: '8px 0' } },
+          { style: { display: 'flex', gap: ui.TOOLBAR_GAP_PX, alignItems: 'center', margin: '8px 0', flexWrap: narrow ? 'wrap' : 'nowrap' } },
           h(
             'select',
             { style: selectStyle, value: filter.tool !== null ? filter.tool : ui.LABEL_TOOL_ALL, onChange: onToolChange },
@@ -254,7 +254,7 @@ window.__ModuleLoader__.load({
         stateText !== null
           ? h(
               'div',
-              { style: secondaryStyle },
+              { style: { ...secondaryStyle, whiteSpace: narrow ? 'normal' : 'nowrap' } },
               stateText + (detail !== '' ? ' -- ' + detail : ''),
             )
           : rowNodes,

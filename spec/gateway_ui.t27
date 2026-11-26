@@ -80,6 +80,30 @@ pub fn is_narrow(width_px: i32) bool {
     return width_px < NARROW_MAX_WIDTH_PX;
 }
 
+; ---- narrow layout law --------------------------------------------------------
+
+; Panel padding used to derive content width from root width.
+pub const PANEL_PADDING_PX : i32 = 12;
+
+; Input minimum width.
+pub const INPUT_MIN_WIDTH_PX : i32 = 80;
+
+; Toolbar control maximum width (applies to select and input elements).
+pub const TOOLBAR_CONTROL_MAX_PX : i32 = 160;
+
+; Toolbar gap between controls.
+pub const TOOLBAR_GAP_PX : i32 = 8;
+
+; Content width derived from root width minus panel padding on each side.
+pub fn derive_content_width(root_width_px: i32) i32 {
+    return root_width_px - (PANEL_PADDING_PX * 2);
+}
+
+; Decides whether the toolbar row should wrap underneath controls.
+pub fn toolbar_wraps(width_px: i32) bool {
+    return is_narrow(width_px);
+}
+
 ; ---- row cap law ----------------------------------------------------------
 
 ; Newest-first tail: never negative, never above VIEW_MAX_ROWS.
@@ -185,6 +209,19 @@ test "narrow boundary is strict at the threshold" {
     try std.testing.expect(!is_narrow(480));
     try std.testing.expect(is_narrow(390));
     try std.testing.expect(!is_narrow(800));
+}
+
+test "content width derives from root minus padding" {
+    try std.testing.expectEqual(@as(i32, 179), derive_content_width(203));
+    try std.testing.expectEqual(@as(i32, 371), derive_content_width(395));
+    try std.testing.expectEqual(@as(i32, 479), derive_content_width(503));
+}
+
+test "toolbar wraps when narrow" {
+    try std.testing.expect(toolbar_wraps(479));
+    try std.testing.expect(!toolbar_wraps(480));
+    try std.testing.expect(toolbar_wraps(390));
+    try std.testing.expect(!toolbar_wraps(800));
 }
 
 test "badge labels cover every decision and fail closed" {
