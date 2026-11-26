@@ -108,9 +108,13 @@ Then install it into the DSH profile that runs the web app (the plugin
 manager needs an absolute path, or it clones the repository itself):
 
 ```bash
-dsh plugin add link:/absolute/path/to/t27-gateway-panel   # from the clone
-dsh plugin add github:gHashTag/t27-gateway-panel          # straight from GitHub
+dsh plugin --profile <profile> add link:/absolute/path/to/t27-gateway-panel
+dsh plugin --profile <profile> add github:gHashTag/t27-gateway-panel
 ```
+
+The plugin command forwards to pnpm inside the profile directory, so the
+dependency lands in `<profile>/package.json` under the package's own name,
+`@local/t27-gateway`.
 
 The profile then needs the three rows the live profile carries:
 
@@ -118,7 +122,7 @@ The profile then needs the three rows the live profile carries:
 2. `"@local/t27-gateway"` in `dsh.profile.bundles`;
 3. `- id: t27-gateway` in `<profile>/cordis.patch.yml` to enable the plugin.
 
-Rollback: `dsh plugin remove @local/t27-gateway`.
+Rollback: `dsh plugin --profile <profile> remove @local/t27-gateway`.
 
 Restart the DSH web process after installing. The server memoises a plugin
 bundle on its first request, so a server that was already running keeps
