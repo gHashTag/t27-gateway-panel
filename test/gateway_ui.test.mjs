@@ -31,8 +31,14 @@ import {
   state_detail,
   badge_label,
   badge_color_token,
-  derive_content_width,
-  toolbar_wraps,
+  LONG_TEXT_WRAP_MODE,
+  TOOLBAR_FLEX_WRAP_MODE,
+  TOOLBAR_CONTROL_MAX_PX,
+  TOOLBAR_CONTROL_MIN_PX,
+  TOOLBAR_INPUT_BASIS_PX,
+  TOOLBAR_GAP_PX,
+  PANEL_PADDING_PX,
+  INPUT_MIN_WIDTH_PX,
 } from '../generated/gateway_ui.mjs';
 
 // State kinds as the spec defines them: 0 ready, 1 error, 2 source-absent,
@@ -91,17 +97,23 @@ test('narrow boundary uses strict < per spec', () => {
   assert.equal(is_narrow(0), true, 'an unmeasured panel is narrow until proven wide');
 });
 
-test('content width derives from root minus padding', () => {
-  assert.equal(derive_content_width(203), 179);
-  assert.equal(derive_content_width(395), 371);
-  assert.equal(derive_content_width(503), 479);
+test('the toolbar row is allowed to wrap at every width', () => {
+  // The break point depends on the host font metrics, which no spec can
+  // measure, so the law allows wrapping unconditionally and CSS decides.
+  assert.equal(TOOLBAR_FLEX_WRAP_MODE, 'wrap');
 });
 
-test('toolbar wraps when narrow', () => {
-  assert.equal(toolbar_wraps(479), true);
-  assert.equal(toolbar_wraps(480), false);
-  assert.equal(toolbar_wraps(390), true);
-  assert.equal(toolbar_wraps(800), false);
+test('long unbreakable text breaks with the anywhere mode', () => {
+  assert.equal(LONG_TEXT_WRAP_MODE, 'anywhere');
+});
+
+test('toolbar geometry is ordered and positive', () => {
+  assert.equal(TOOLBAR_CONTROL_MIN_PX > 0, true);
+  assert.equal(TOOLBAR_CONTROL_MAX_PX > TOOLBAR_CONTROL_MIN_PX, true);
+  assert.equal(TOOLBAR_INPUT_BASIS_PX >= INPUT_MIN_WIDTH_PX, true);
+  assert.equal(INPUT_MIN_WIDTH_PX > 0, true);
+  assert.equal(TOOLBAR_GAP_PX > 0, true);
+  assert.equal(PANEL_PADDING_PX > 0, true);
 });
 
 test('every generated string the client renders is a token name or a label, never a literal color', () => {

@@ -143,8 +143,6 @@ window.__ModuleLoader__.load({
         .replace('{denyRate}', String(counters.denyRate))
         .replace('{total}', String(counters.total));
       const footerText = ui.LABEL_DROPPED_TEMPLATE.replace('{dropped}', String(dropped));
-      const contentWidth = ui.derive_content_width(widthPx);
-      const toolbarWraps = ui.toolbar_wraps(contentWidth);
       const stateText =
         kind === 1 ? ui.LABEL_ERROR : kind === 2 ? ui.LABEL_SOURCE_ABSENT : kind === 3 ? ui.LABEL_EMPTY : null;
 
@@ -178,14 +176,18 @@ window.__ModuleLoader__.load({
         background: 'var(' + ui.STYLE_TOKEN_BG + ', inherit)',
         border: '1px solid var(' + ui.STYLE_TOKEN_BORDER + ', transparent)',
         borderRadius: 8,
-        padding: 12,
+        padding: ui.PANEL_PADDING_PX,
         margin: '8px 0',
         minWidth: 0,
         color: 'inherit',
       };
       const secondaryStyle = { color: 'var(' + ui.STYLE_TOKEN_TEXT_SECONDARY + ', inherit)' };
       const selectStyle = { ...ellipsisStyle, maxWidth: ui.TOOLBAR_CONTROL_MAX_PX, minWidth: ui.TOOLBAR_CONTROL_MIN_PX };
-      const inputStyle = { flex: '1 1 120px', minWidth: ui.INPUT_MIN_WIDTH_PX };
+      const inputStyle = {
+        flex: '1 1 ' + ui.TOOLBAR_INPUT_BASIS_PX + 'px',
+        minWidth: ui.INPUT_MIN_WIDTH_PX,
+        maxWidth: ui.TOOLBAR_CONTROL_MAX_PX,
+      };
 
       const rowNodes = rows.map((row) =>
         h(
@@ -229,7 +231,7 @@ window.__ModuleLoader__.load({
         h('div', { style: secondaryStyle }, countersLine),
         h(
           'div',
-          { style: { display: 'flex', gap: ui.TOOLBAR_GAP_PX, alignItems: 'center', margin: '8px 0', flexWrap: toolbarWraps ? 'wrap' : 'nowrap' } },
+          { style: { display: 'flex', gap: ui.TOOLBAR_GAP_PX, alignItems: 'center', margin: '8px 0', flexWrap: ui.TOOLBAR_FLEX_WRAP_MODE } },
           h(
             'select',
             { style: selectStyle, value: filter.tool !== null ? filter.tool : ui.LABEL_TOOL_ALL, onChange: onToolChange },
@@ -255,7 +257,7 @@ window.__ModuleLoader__.load({
         stateText !== null
           ? h(
               'div',
-              { style: { ...secondaryStyle, overflowWrap: ui.LONG_TEXT_WRAP_MODE, whiteSpace: narrow ? 'normal' : 'nowrap' } },
+              { style: { ...secondaryStyle, overflowWrap: ui.LONG_TEXT_WRAP_MODE } },
               stateText + (detail !== '' ? ' -- ' + detail : ''),
             )
           : rowNodes,
